@@ -1,0 +1,15 @@
+Status	results/bowtie2_bam/Unt_A_rep1_ATACseq_aligned_reads_sorted_nodup_noblacklist_noM.bam	results/bowtie2_bam/Unt_A_rep2_ATACseq_aligned_reads_sorted_nodup_noblacklist_noM.bam	results/bowtie2_bam/Unt_F_rep1_ATACseq_aligned_reads_sorted_nodup_noblacklist_noM.bam	results/bowtie2_bam/Unt_F_rep2_ATACseq_aligned_reads_sorted_nodup_noblacklist_noM.bam	results/bowtie2_bam/HU_A_rep1_ATACseq_aligned_reads_sorted_nodup_noblacklist_noM.bam	results/bowtie2_bam/HU_A_rep2_ATACseq_aligned_reads_sorted_nodup_noblacklist_noM.bam	results/bowtie2_bam/HU_F_rep1_ATACseq_aligned_reads_sorted_nodup_noblacklist_noM.bam	results/bowtie2_bam/HU_F_rep2_ATACseq_aligned_reads_sorted_nodup_noblacklist_noM.bam
+Assigned	9496336	24698792	12478409	9159543	11531072	21774806	11279954	9608384
+Unassigned_Unmapped	0	0	0	0	0	0	0	0
+Unassigned_Read_Type	0	0	0	0	0	0	0	0
+Unassigned_Singleton	0	0	0	0	0	0	0	0
+Unassigned_MappingQuality	0	0	0	0	0	0	0	0
+Unassigned_Chimera	0	0	0	0	0	0	0	0
+Unassigned_FragmentLength	0	0	0	0	0	0	0	0
+Unassigned_Duplicate	0	0	0	0	0	0	0	0
+Unassigned_MultiMapping	0	0	0	0	0	0	0	0
+Unassigned_Secondary	0	0	0	0	0	0	0	0
+Unassigned_NonSplit	0	0	0	0	0	0	0	0
+Unassigned_NoFeatures	10557668	33952128	14051405	15983324	26739555	29529217	25462859	18658495
+Unassigned_Overlapping_Length	0	0	0	0	0	0	0	0
+Unassigned_Ambiguity	0	0	0	0	0	0	0	0

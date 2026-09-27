@@ -1,0 +1,19 @@
+---
+# directories
+result_dir:  results/ # should be kept
+working_dir: temp/    # can be removed (temporary files)
+fastq_dir: "/home/briando/data/files/210305Van/bd186/fastqs/"
+
+# samples to condition
+sample_sheet: config/220526_BD186_sample_sheet.csv
+
+######
+# bowtie2
+######
+
+threads: 10
+genome_index: "/home/briando/data/genomes/hg38/GRCh38_noalt_as/GRCh38_noalt_as"
+chromsize: "/home/briando/data/genomes/hg38/GRCh38_EBV.chrom.sizes"
+blacklist: "/home/briando/data/genomes/hg38/hg38-blacklist.v2.bed"
+macs2_genome_size: "hs"
+peak_name: "HUDEP2"

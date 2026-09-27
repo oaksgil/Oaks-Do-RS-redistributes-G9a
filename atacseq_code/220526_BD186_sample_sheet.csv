@@ -1,0 +1,9 @@
+﻿name,Fraction,Treatment,Rep,filename1,filename2
+Unt_A_rep1_ATACseq,A,Vehicle,1,210305Van_D21-2211_1_sequence.fastq.gz,210305Van_D21-2211_2_sequence.fastq.gz
+Unt_A_rep2_ATACseq,A,Vehicle,2,210305Van_D21-2212_1_sequence.fastq.gz,210305Van_D21-2212_2_sequence.fastq.gz
+Unt_F_rep1_ATACseq,F,Vehicle,1,210305Van_D21-2213_1_sequence.fastq.gz,210305Van_D21-2213_2_sequence.fastq.gz
+Unt_F_rep2_ATACseq,F,Vehicle,2,210305Van_D21-2214_1_sequence.fastq.gz,210305Van_D21-2214_2_sequence.fastq.gz
+HU_A_rep1_ATACseq,A,HU,1,210305Van_D21-2215_1_sequence.fastq.gz,210305Van_D21-2215_2_sequence.fastq.gz
+HU_A_rep2_ATACseq,A,HU,2,210305Van_D21-2216_1_sequence.fastq.gz,210305Van_D21-2216_2_sequence.fastq.gz
+HU_F_rep1_ATACseq,F,HU,1,210305Van_D21-2217_1_sequence.fastq.gz,210305Van_D21-2217_2_sequence.fastq.gz
+HU_F_rep2_ATACseq,F,HU,2,210305Van_D21-2218_1_sequence.fastq.gz,210305Van_D21-2218_2_sequence.fastq.gz

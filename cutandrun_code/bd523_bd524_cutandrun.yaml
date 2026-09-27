@@ -1,0 +1,21 @@
+---
+# directories
+result_dir:  results/ # should be kept
+working_dir: temp/    # can be removed (temporary files)
+fastq_dir: "/net/bmc-pub17/mirror/lab/vanderheiden/briando/files/bd523_bd524/fastq/"
+
+# samples to condition
+sample_sheet: config/250503_bd523_bd524_sample_sheet.csv
+
+######
+# bowtie2
+######
+
+threads: 10
+mm_genome_index: "/home/briando/data/genomes/mm10/bowtie2_index/mm10"
+mm_chromsize: "/home/briando/data/genomes/mm10/mm10.chrom.sizes"
+mm_blacklist: "/home/briando/data/genomes/mm10/mm10.blacklist.bed"
+
+hs_genome_index: "/home/briando/data/genomes/hg38/GRCh38_noalt_as/GRCh38_noalt_as"
+hs_chromsize: "/home/briando/data/genomes/hg38/GRCh38_EBV.chrom.sizes"
+hs_blacklist: "/home/briando/data/genomes/hg38/hg38-blacklist.v2.bed"
