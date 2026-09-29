@@ -1,0 +1,619 @@
+---
+title: "Oaks-Do-PLA-analysis"
+output: html_document
+---
+
+Load libraries
+```{r}
+#load libraries
+library(ggplot2)
+library(dplyr)
+library(stringr)
+library(tidyr)
+library(ggpubr)
+library(pracma)
+library(rstatix)
+```
+Load data and set directory
+```{r}
+#set directory and load data
+setwd("/Users/oaksgil/Downloads")
+data = read.csv("pla-data-clean.csv")
+```
+
+Function for finding significant bimodal peaks
+```{r}
+find_bimodal_peaks_significant <- function(x,
+                                           min_peak_distance = 1,
+                                           min_valley_drop = 0,
+                                           bw = "nrd0") {
+  # Compute density
+  dens <- density(x, bw = bw)
+  
+  dx <- mean(diff(dens$x))
+  min_distance_idx <- ceiling(min_peak_distance / dx)
+  
+  # Detect all peaks with essentially no height cutoff
+  peaks <- findpeaks(dens$y, minpeakheight = 0, minpeakdistance = min_distance_idx)
+  
+  # If fewer than 2 peaks detected, return NA
+  if (is.null(peaks) || nrow(peaks) < 2) {
+    return(data.frame(left_peak = NA, left_y = NA,
+                      right_peak = NA, right_y = NA,
+                      n_peaks = ifelse(is.null(peaks), 0, nrow(peaks))))
+  }
+  
+  # Get x and y positions of all peaks
+  peak_x <- dens$x[peaks[,2]]
+  peak_y <- peaks[,1]
+  
+  # Compute peak prominence (peak height minus minimum valley between neighboring peaks)
+  prominences <- numeric(length(peak_y))
+  for (i in seq_along(peak_y)) {
+    left_valley <- if (i == 1) min(dens$y[1:peaks[i,2]]) else min(dens$y[peaks[i-1,2]:peaks[i,2]])
+    right_valley <- if (i == length(peak_y)) min(dens$y[peaks[i,2]:length(dens$y)]) else min(dens$y[peaks[i,2]:peaks[i+1,2]])
+    prominences[i] <- peak_y[i] - max(left_valley, right_valley)
+  }
+  
+  # Pick top 2 peaks by prominence
+  top_idx <- order(prominences, decreasing = TRUE)[1:2]
+  top_peaks_x <- peak_x[top_idx]
+  top_peaks_y <- peak_y[top_idx]
+  
+  # Assign left/right based on x position
+  left_peak <- top_peaks_x[which.min(top_peaks_x)]
+  left_y <- top_peaks_y[which.min(top_peaks_x)]
+  right_peak <- top_peaks_x[which.max(top_peaks_x)]
+  right_y <- top_peaks_y[which.max(top_peaks_x)]
+  
+  # Optional valley check between the two selected peaks
+  if (min_valley_drop > 0) {
+    valley_range <- dens$x >= left_peak & dens$x <= right_peak
+    valley_y <- min(dens$y[valley_range])
+    min_allowed_valley <- min(left_y, right_y) * (1 - min_valley_drop)
+    
+    if (valley_y > min_allowed_valley) {
+      return(data.frame(left_peak = NA, left_y = NA,
+                        right_peak = NA, right_y = NA, n_peaks = nrow(peaks)))
+    }
+  }
+  
+  data.frame(left_peak, left_y, right_peak, right_y, n_peaks = nrow(peaks))
+}
+
+```
+Functions for finding cutoffs (GO86 done separately)
+```{r}
+find_bimodal_cutoff_go86 <- function(x, bw = "nrd0",
+                                      lower_frac = 0.1,  # 10% of (right-left)
+                                      upper_frac = 0.1,  # 10% of (right-left)
+                                      min_buffer = 0,     # optional floor
+                                      max_buffer = Inf) { # optional cap
+  x <- x[is.finite(x)]
+  if (length(x) < 2) {
+    return(data.frame(left_peak = NA, right_peak = NA, cutoff = NA,
+                      lower_cutoff = NA, upper_cutoff = NA,
+                      lower_buffer = NA, upper_buffer = NA))
+  }
+  dens <- density(x, bw = bw)
+  y <- dens$y
+  x_vals <- dens$x
+  # local maxima indices
+  peaks_idx <- which(diff(sign(diff(y))) == -2) + 1
+  # require exactly 2 peaks
+  if (length(peaks_idx) != 2) {
+    return(data.frame(left_peak = NA, right_peak = NA, cutoff = NA,
+                      lower_cutoff = NA, upper_cutoff = NA,
+                      lower_buffer = NA, upper_buffer = NA))
+  }
+  
+  left_peak  <- x_vals[peaks_idx[1]]
+  right_peak <- x_vals[peaks_idx[2]]
+  
+  between_idx <- which(x_vals > left_peak & x_vals < right_peak)
+  if (length(between_idx) == 0) {
+    return(data.frame(left_peak = left_peak, right_peak = right_peak, cutoff = NA,
+                      lower_cutoff = NA, upper_cutoff = NA,
+                      lower_buffer = NA, upper_buffer = NA))
+  }
+  
+  cutoff <- x_vals[between_idx[which.min(y[between_idx])]]
+  
+  # --- relative buffers based on peak separation ---
+  sep <- right_peak - left_peak
+  lower_buffer <- sep * lower_frac
+  upper_buffer <- sep * upper_frac
+  
+  # optional clamp
+  lower_buffer <- max(min_buffer, min(max_buffer, lower_buffer))
+  upper_buffer <- max(min_buffer, min(max_buffer, upper_buffer))
+  
+  lower_cutoff <- cutoff - lower_buffer
+  upper_cutoff <- cutoff + upper_buffer
+  
+  data.frame(left_peak, right_peak, cutoff,
+             lower_cutoff, upper_cutoff,
+             lower_buffer, upper_buffer)
+}
+
+
+####### classify local minima between the peaks, with relative buffers
+find_bimodal_cutoff_strict <- function(x, bw = "nrd0",
+                                      lower_frac = 0.50,  # 10% of (right-left)
+                                      upper_frac = 0.50,  # 10% of (right-left)
+                                      min_buffer = 0,     # optional floor
+                                      max_buffer = Inf) { # optional cap
+  x <- x[is.finite(x)]
+  if (length(x) < 2) {
+    return(data.frame(left_peak = NA, right_peak = NA, cutoff = NA,
+                      lower_cutoff = NA, upper_cutoff = NA,
+                      lower_buffer = NA, upper_buffer = NA))
+  }
+  dens <- density(x, bw = bw)
+  y <- dens$y
+  x_vals <- dens$x
+  # local maxima indices
+  peaks_idx <- which(diff(sign(diff(y))) == -2) + 1
+  # require exactly 2 peaks
+  if (length(peaks_idx) != 2) {
+    return(data.frame(left_peak = NA, right_peak = NA, cutoff = NA,
+                      lower_cutoff = NA, upper_cutoff = NA,
+                      lower_buffer = NA, upper_buffer = NA))
+  }
+  
+  left_peak  <- x_vals[peaks_idx[1]]
+  right_peak <- x_vals[peaks_idx[2]]
+  
+  between_idx <- which(x_vals > left_peak & x_vals < right_peak)
+  if (length(between_idx) == 0) {
+    return(data.frame(left_peak = left_peak, right_peak = right_peak, cutoff = NA,
+                      lower_cutoff = NA, upper_cutoff = NA,
+                      lower_buffer = NA, upper_buffer = NA))
+  }
+  
+  cutoff <- x_vals[between_idx[which.min(y[between_idx])]]
+  
+  # --- relative buffers based on peak separation ---
+  sep <- right_peak - left_peak
+  lower_buffer <- sep * lower_frac
+  upper_buffer <- sep * upper_frac
+  
+  # optional clamp
+  lower_buffer <- max(min_buffer, min(max_buffer, lower_buffer))
+  upper_buffer <- max(min_buffer, min(max_buffer, upper_buffer))
+  
+  lower_cutoff <- cutoff - lower_buffer
+  upper_cutoff <- cutoff + upper_buffer
+  
+  data.frame(left_peak, right_peak, cutoff,
+             lower_cutoff, upper_cutoff,
+             lower_buffer, upper_buffer)
+}
+
+```
+
+Calculate significant bimodal peaks
+```{r}
+# Calculate peaks for each stack name using local maxima finding
+peaks_df <- data %>%
+  group_by(stack_name, experiment) %>%
+  filter(n() >= 2) %>%
+  summarize(peaks = list(find_bimodal_peaks_significant(edu_int)), .groups = "drop") %>%
+  unnest(peaks)
+
+peaks_df_clean <- na.omit(peaks_df)
+
+clean_data <- data %>%
+  inner_join(peaks_df_clean, by = c("stack_name", "experiment"))
+```
+Calculate cutoffs
+```{r}
+#cutoffs per stack
+cutoffs_df_go86 <- filter(clean_data, experiment == 86) %>%
+  group_by(stack_name) %>%
+  summarize(cutoffs = list(find_bimodal_cutoff_go86(edu_int)), 
+            .groups = "drop") %>%
+  unnest(cutoffs)
+
+#cutoffs per stack
+cutoffs_df_all <- filter(clean_data, experiment != 86) %>%
+  group_by(stack_name) %>%
+  summarize(cutoffs = list(find_bimodal_cutoff_strict(edu_int)), 
+            .groups = "drop") %>%
+  unnest(cutoffs)
+
+cutoffs_df <- bind_rows(cutoffs_df_go86, cutoffs_df_all) %>%
+  filter(!is.na(left_peak))
+```
+
+Assign EdU intensity to bottom or top tables
+```{r}
+df_bottom <- clean_data %>%
+  inner_join(cutoffs_df, by = "stack_name") %>%
+  filter(edu_int < lower_cutoff)
+
+df_top <- clean_data %>%
+  inner_join(cutoffs_df, by = "stack_name") %>%
+  filter(edu_int > upper_cutoff)
+```
+
+Figure 5D
+```{r}
+####Make Basic Figure (n =5)
+
+# 1. Define antibodies of interest
+antibodies_of_interest <- c("G9a", "WIZ", "H3K9me3", "H3K9me2")
+
+# 2. Subset data
+df_subset <- df_top %>%
+  filter(
+    antibody %in% antibodies_of_interest,
+    clone == "32",
+    condition %in% c("Veh", "HU", "post-rep DNA"),
+    experiment %in% c(86,84,108,102,118)
+  )
+
+#df_subset$condition <- as.character(df_subset$condition)
+df_subset$condition <- factor(df_subset$condition, levels = c("Veh", "HU", "post-rep DNA"))
+
+# 3. Run pairwise Wilcoxon tests by antibody
+stat_test <- df_subset %>%
+  group_by(antibody) %>%
+  pairwise_wilcox_test(pla_ct ~ condition, p.adjust.method = "BH") %>%
+  add_y_position() %>% 
+  ungroup()
+  
+# Optional: keep only nice significance labels
+stat_test <- stat_test %>%
+  mutate(
+    p.adj.signif = case_when(
+      p.adj < 0.0001 ~ "****",
+      p.adj < 0.001  ~ "***",
+      p.adj < 0.01   ~ "**",
+      TRUE             ~ "ns"
+    )
+  )
+
+stat_test$y.position <- c(67.5, 75, 82.5, 120,135,150, 120, 135,150, 105, 120, 135)
+
+# 4. Plot with significance bars
+p = ggplot(df_subset, aes(x = condition, y = pla_ct, fill = condition)) +
+  geom_boxplot(outlier.shape = NA, alpha = 1) +
+  #geom_jitter(width = 0.2, size = 0.2, alpha = 0.5) +
+  stat_pvalue_manual(
+    stat_test,
+    label = "p.adj.signif",
+    tip.length = 0.01,
+    hide.ns = FALSE,
+    inherit.aes = FALSE,
+    size = 6
+  ) +
+  facet_wrap(~antibody, scales = "free_y") +
+  labs(
+    y = "Adjusted PLA Foci Count",
+    x = "Condition"
+  ) +
+  scale_fill_manual(values = c(
+    "Veh" = "lightsteelblue1",
+    "HU" = "lightsteelblue3",
+    "post-rep DNA" = "steelblue1"
+  )) +
+  theme_bw(base_size = 20) +
+  theme(axis.text.x = element_text(angle = 25, hjust = 0.5, vjust = 0.65)) + theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank()
+)
+p
+
+# Count number of individual points in each boxplot
+point_counts <- df_subset %>%
+  group_by(antibody, condition) %>%
+  summarise(
+    n = sum(!is.na(pla_ct)),
+    .groups = "drop"
+  )
+
+point_counts
+```
+Figure 5G
+```{r}
+# 1. Define antibodies of interest
+antibodies_of_interest <- c("H3K9me2", "G9a")
+#,"h3k9me2", "pcna", "prpa", "wiz", "znf644")
+
+# 2. Subset data
+df_subset <- df_top %>%
+  filter(
+    antibody %in% antibodies_of_interest,
+    clone == "32",
+    condition %in% c("Veh", "dWIZ", "HU", "HU + dWIZ"),
+    experiment %in% c(84,118)
+  )
+
+#df_subset$condition <- as.character(df_subset$condition)
+df_subset$condition <- factor(df_subset$condition, levels = c("Veh", "dWIZ", "HU", "HU + dWIZ"))
+
+# 3. Run pairwise Wilcoxon tests by antibody
+stat_test <- df_subset %>%
+  group_by(antibody) %>%
+  pairwise_wilcox_test(pla_ct ~ condition, p.adjust.method = "BH") %>%
+  add_y_position() %>% 
+  ungroup()
+  
+# Optional: keep only nice significance labels
+stat_test <- stat_test %>%
+  mutate(
+    p.adj.signif = case_when(
+      p.adj < 0.0001 ~ "****",
+      p.adj < 0.001  ~ "***",
+      p.adj < 0.01   ~ "**",
+      TRUE             ~ "ns"
+    )
+  )
+
+stat_test$y.position <- c(62.5, 75, 87.5, 100, 112.5, 125,
+                          80, 95, 110, 125,140,155)
+
+# 4. Plot with significance bars
+q = ggplot(df_subset, aes(x = condition, y = pla_ct, fill = condition)) +
+  geom_boxplot(outlier.shape = NA, alpha = 1) +
+  #geom_jitter(width = 0.2, size = 0.2, alpha = 0.5) +
+  stat_pvalue_manual(
+    stat_test,
+    label = "p.adj.signif",
+    tip.length = 0.01,
+    hide.ns = FALSE,
+    inherit.aes = FALSE,
+    size = 6
+  ) +
+  facet_wrap(~antibody, scales = "free_y") +
+  labs(
+    y = "Adjusted PLA Foci Count",
+    x = "Condition"
+  ) +
+  scale_fill_manual(values = c(
+    "Veh" = "lightsteelblue1",
+    "HU" = "lightsteelblue3",
+    "post-rep DNA" = "steelblue1",
+    "dWIZ" = "steelblue3",
+    "HU + dWIZ" = "steelblue4"
+  )) +
+  theme_classic(base_size = 20) +
+  theme(axis.text.x = element_text(angle = 25, hjust = 0.5, vjust = 0.65)) #+ylim(0,40)
+q
+
+point_counts <- df_subset %>%
+  group_by(antibody, condition) %>%
+  summarise(
+    n = sum(!is.na(pla_ct)),
+    .groups = "drop"
+  )
+
+point_counts
+```
+Figure S8A
+```{r}
+# 1. Define antibodies of interest
+antibodies_of_interest <- c("PCNA", "phospho-RPA")
+
+# 2. Subset data
+df_subset <- df_top %>%
+  filter(
+    antibody %in% antibodies_of_interest,
+    clone == "32",
+    condition %in% c("Veh", "HU", "post-rep DNA"),
+    experiment %in% c(86,84,108,102)
+  )
+
+df_subset$condition <- factor(df_subset$condition, levels = c("Veh", "HU", "post-rep DNA"))
+
+# 3. Run pairwise Wilcoxon tests by antibody
+stat_test <- df_subset %>%
+  group_by(antibody) %>%
+  pairwise_wilcox_test(pla_ct ~ condition, p.adjust.method = "BH") %>%
+  add_y_position() %>% 
+  ungroup()
+  
+# Optional: keep only nice significance labels
+stat_test <- stat_test %>%
+  mutate(
+    p.adj.signif = case_when(
+      p.adj < 0.0001 ~ "****",
+      p.adj < 0.001  ~ "***",
+      p.adj < 0.01   ~ "**",
+      TRUE             ~ "ns"
+    )
+  )
+
+stat_test$y.position <- c(130, 145, 160, 125,140,155)#, 120, 135,150, 105, 120, 135)
+
+# 4. Plot with significance bars
+r = ggplot(df_subset, aes(x = condition, y = pla_ct, fill = condition)) +
+  geom_boxplot(outlier.shape = NA, alpha = 1) +
+  #geom_jitter(width = 0.2, size = 0.2, alpha = 0.5) +
+  stat_pvalue_manual(
+    stat_test,
+    label = "p.adj.signif",
+    tip.length = 0.01,
+    hide.ns = FALSE,
+    inherit.aes = FALSE,
+    size = 6
+  ) +
+  facet_wrap(~antibody, scales = "free_y") +
+  labs(
+    y = "Adjusted PLA Foci Count",
+    x = "Condition"
+  ) +
+  scale_fill_manual(values = c(
+    "Veh" = "lightsteelblue1",
+    "HU" = "lightsteelblue3",
+    "post-rep DNA" = "steelblue1"
+  )) +
+  theme_bw(base_size = 20) +
+  theme(axis.text.x = element_text(angle = 25, hjust = 0.5, vjust = 0.65)) + theme(
+  panel.grid.major = element_blank()
+)
+r
+
+point_counts <- df_subset %>%
+  group_by(antibody, condition) %>%
+  summarise(
+    n = sum(!is.na(pla_ct)),
+    .groups = "drop"
+  )
+
+point_counts
+```
+Figure S8C
+```{r}
+# 1. Define antibodies of interest
+antibodies_of_interest <- c("G9a", "WIZ", "H3K9me2", "H3K9me3", "PCNA", "phospho-RPA")
+
+# 2. Subset data
+df_subset <- df_top %>%
+  filter(
+    antibody %in% antibodies_of_interest,
+    clone == "btd",
+    condition %in% c("Veh", "HU", "post-rep DNA"),
+    experiment %in% c(118, 102)
+  ) %>%
+  # Exclude only Veh-treated WIZ cells from experiment 118
+  filter(!(antibody == "WIZ" & condition == "Veh" & experiment == 118)) %>%
+  filter(!(antibody == "WIZ" & condition == "HU" & experiment == 118))
+
+#df_subset$condition <- as.character(df_subset$condition)
+df_subset$condition <- factor(df_subset$condition, levels = c("Veh", "HU", "post-rep DNA"))
+
+# 3. Run pairwise Wilcoxon tests by antibody
+stat_test <- df_subset %>%
+  group_by(antibody) %>%
+  pairwise_wilcox_test(pla_ct ~ condition, p.adjust.method = "BH") %>%
+  add_y_position() %>% 
+  ungroup()
+  
+# Optional: keep only nice significance labels
+stat_test <- stat_test %>%
+  mutate(
+    p.adj.signif = case_when(
+      p.adj < 0.0001 ~ "****",
+      p.adj < 0.001  ~ "***",
+      p.adj < 0.01   ~ "**",
+      TRUE             ~ "ns"
+    )
+  )
+
+stat_test$y.position <- c(65, 70, 75, 55, 65, 75, 90, 105, 120, 110, 120, 130, 100, 112.5, 125,50, 55, 60)
+
+# 4. Plot with significance bars
+s = ggplot(df_subset, aes(x = condition, y = pla_ct, fill = condition)) +
+  geom_boxplot(outlier.shape = NA, alpha = 1) +
+  #geom_jitter(width = 0.2, size = 0.2, alpha = 0.5) +
+  stat_pvalue_manual(
+    stat_test,
+    label = "p.adj.signif",
+    tip.length = 0.01,
+    hide.ns = FALSE,
+    inherit.aes = FALSE,
+    size = 4
+  ) +
+  facet_wrap(~antibody, scales = "free_y") +
+  labs(
+    y = "Adjusted PLA Foci Count",
+    x = "Condition"
+  ) +
+  scale_fill_manual(values = c(
+    "Veh" = "lightsteelblue1",
+    "HU" = "lightsteelblue3",
+    "post-rep DNA" = "steelblue1",
+    "dWIZ" = "steelblue3",
+    "HU + dWIZ" = "steelblue4"
+  )) +
+  theme_bw(base_size = 20) +
+  theme(axis.text.x = element_text(angle = 25, hjust = 0.5, vjust = 0.65)) + theme(
+  panel.grid.major = element_blank()
+)
+s
+
+point_counts <- df_subset %>%
+  group_by(antibody, condition) %>%
+  summarise(
+    n = sum(!is.na(pla_ct)),
+    .groups = "drop"
+  )
+
+point_counts
+```
+Figure S8D
+```{r}
+# 1. Define antibodies of interest
+antibodies_of_interest <- c("WIZ")
+
+# 2. Subset data
+df_subset <- df_top %>%
+  filter(
+    antibody %in% antibodies_of_interest,
+    clone == "32",
+    condition %in% c("Veh", "dWIZ"),
+    experiment %in% c(84,118)
+  )
+
+#df_subset$condition <- as.character(df_subset$condition)
+df_subset$condition <- factor(df_subset$condition, levels = c("Veh", "dWIZ", "HU", "HU + dWIZ"))
+
+# 3. Run pairwise Wilcoxon tests by antibody
+stat_test <- df_subset %>%
+  group_by(antibody) %>%
+  pairwise_wilcox_test(pla_ct ~ condition, p.adjust.method = "BH") %>%
+  add_y_position() %>% 
+  ungroup()
+  
+# Optional: keep only nice significance labels
+stat_test <- stat_test %>%
+  mutate(
+    p.adj.signif = case_when(
+      p.adj < 0.0001 ~ "****",
+      p.adj < 0.001  ~ "***",
+      p.adj < 0.01   ~ "**",
+      TRUE             ~ "ns"
+    )
+  )
+
+stat_test$y.position <- c(120)
+
+# 4. Plot with significance bars
+t = ggplot(df_subset, aes(x = condition, y = pla_ct, fill = condition)) +
+  geom_boxplot(outlier.shape = NA, alpha = 1) +
+  #geom_jitter(width = 0.2, size = 0.2, alpha = 0.5) +
+  stat_pvalue_manual(
+    stat_test,
+    label = "p.adj.signif",
+    tip.length = 0.01,
+    hide.ns = FALSE,
+    inherit.aes = FALSE,
+    size = 6
+  ) +
+  facet_wrap(~antibody, scales = "free_y") +
+  labs(
+    y = "Adjusted PLA Foci Count",
+    x = "Condition"
+  ) +
+  scale_fill_manual(values = c(
+    "Veh" = "lightsteelblue1",
+    "HU" = "lightsteelblue3",
+    "post-rep DNA" = "steelblue1",
+    "dWIZ" = "steelblue3",
+    "HU + dWIZ" = "steelblue4"
+  )) +
+  theme_classic(base_size = 20) +
+  theme(axis.text.x = element_text(angle = 25, hjust = 0.5, vjust = 0.65)) #+ylim(0,40)
+t
+
+point_counts <- df_subset %>%
+  group_by(antibody, condition) %>%
+  summarise(
+    n = sum(!is.na(pla_ct)),
+    .groups = "drop"
+  )
+
+point_counts
+```
